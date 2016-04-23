@@ -1,0 +1,249 @@
+---
+title: "Project 4 - Migrating MySQL to Neo4j"
+author: "Logan Thomson"
+date: "April 20, 2016"
+output: 
+  html_document:
+    toc: true
+    toc_float:
+      smooth_scroll: true
+    theme: readable
+    highlight: zenburn
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Load Packages  
+
+For this assignment, we are migrating the tuberculosis data in MySQL from an earlier assignment into the NoSQL database Neo4j. Packages used are `RMySQL` and `RNeo4j` to connect to the databases, and `visNetwork` and `igraph` for some light visualization within RStudio.  
+
+```{r load_packages, message=FALSE, results='hide'}
+packages <- c("RMySQL", "RNeo4j", "visNetwork", "igraph")
+lapply(packages, library, character.only = T)
+```  
+
+##Get the Data from MySQL  
+
+First we'll connect to the already-existing MySQL `tb` database. There are two different tables that are combined into one. Since we are new to Neo4j and its Cypher query language, we'll just import a single table into Neo4j.  
+
+```{r mysql_connect}
+drv <- dbDriver('MySQL')
+con <- dbConnect(drv, user="root", password="", dbname = "tb",
+                 host = "localhost")
+```  
+
+The snippet below will pull the data from MySQL, and then store the resulting data in an object called `cases_per_1000`.  
+
+```{r mysql_query, eval=FALSE}
+query <- "SELECT t.country, t.year, sum(t.cases) AS cases, p.population,
+(t.cases / p.population) * 1000 AS rate
+FROM tb_cases AS t
+INNER JOIN population AS p
+ON p.country = t.country
+AND p.year = t.year
+WHERE cases is not null
+GROUP BY t.country, t.year"
+
+cases_per_1000 <- dbGetQuery(con, query)
+```  
+
+The data is then written to a .csv file, which will be saved in the working directory of this R Markdown file.  The .csv file is created for examples showing the migration process without using RStudio.  
+
+```{r write_csv, eval=FALSE}
+# write the query results to a .csv file in the working directory
+write.csv(cases_per_1000, "pop_tb_cases.csv", row.names=TRUE, na="")
+```  
+
+####Disconnect from MySQL  
+
+```{r disconnect_mysql, warning=FALSE, eval=FALSE}
+# disconnect from MySQL, unload driver
+dbDisconnect(con)
+dbUnloadDriver(drv)
+```
+
+##Load Export of Data  
+
+For reproducability, the resulting .csv file has been loaded into GitHub, and we will download the data and store it in a data frame object called `tb`. The first few rows of the tuberculosis data are shown below.  
+
+```{r load_csv_file}
+# open file
+path <- ("https://raw.githubusercontent.com/Logan213/DATA607_Project4/master/pop_tb_cases.csv")
+con <- file(path, open="r")
+tb <- read.csv(con, header = TRUE, stringsAsFactors = FALSE)
+
+# close file
+close(con)
+head(tb)
+```  
+
+##Load Data Into Neo4j  
+
+Before loading Neo4j, login credentials have been hidden in an R script file. You will need to change the code chunk below to contain your username and password as character strings after the appropriate parameters in `startGraph`.
+
+```{r neo4j_credentials, echo=FALSE}
+# R script containing username and password for neo4j
+source("/Users/Logan/Documents/School/CUNY_SPS/DATA\ 607/proj_4_keys.R")
+```
+
+###Start Fresh, Build Initial Query  
+
+First, the connection and credentials for Neo4j are passed into the `starGraph` function from the `RNeo4j` package, and stored in a variable simply called `graph`. 
+The `clear` function is used to start with a fresh database, so we won't be adding any data to an already existing graph. This is commented out in order to render the R Markdown.  
+
+```{r connect_to_Neo4j}
+graph = startGraph("http://localhost:7474/db/data/", username=id, password=pw)
+
+# Clears out any existing Neo4j graph, equivlent to `MATCH (a)-[r]-() delete a,r
+# clear(graph, input = TRUE)
+```  
+
+Now we will add a constraint on one of the nodes we'll create, based on the `population` column from our .csv file. The node will be named "counts" and it will contain node properties for country name, year, number of tb cases, and population during that year.  
+
+Next, the query is built, but slightly different from how we would normally call it in the Neo4j browser. Since we are entering the data using a data frame, the property values are contained in `{}`, where as in the Neo4j browser they are called with the csv.column. The objects in the curly braces will be defined in the "for loop" below.  
+
+Three nodes will be created: country, year, and counts. This will link the country to the number of cases which will then connect to the specific year.  The `MERGE` command is used because we don't want to create mulitple nodes of countries or years that are contained in the rows of our data set.  
+
+```{r create_node_query}
+addConstraint(graph, "cases", "pop")
+
+query = "
+MERGE (:country {name:{country}})
+MERGE (:year {year:{year}})
+MERGE (:counts {country:{country},year:{year},cases:{cases},pop:{population}})
+"
+```  
+
+Next, we'll use a loop to add each row of data from our `tb` data frame into Neo4j. The code below was borrowed from the tutorial at the following URL: http://neo4j.com/blog/upload-last-fm-data-neo4j-rneo4j-transactional-endpoint/  
+
+First, a "transaction" using our graph object, containing the graph database location and credentials, is created. Then, for each row in the data frame, `appendCypher` is called, which will combine our transaction object, the query built above, and then the four variables we have created containing the column of the dataframe. These are the variables which will be inserted into the `{}` in the query above.  
+
+The names of the nodes are created within the query itself (the word after the ":"), and the property names which will make each node unique, are drawn from the column data in each row of the data frame.
+
+```{r load_data_loop}
+tx = newTransaction(graph)
+
+for (i in 1:nrow(tb)) {
+  # Upload in blocks of 1000.
+  if(i %% 1000 == 0) {
+    # Commit current transaction.
+    commit(tx)
+    # Open new transaction.
+    tx = newTransaction(graph)
+  }
+
+  # Append paramaterized Cypher query to transaction.
+  appendCypher(tx,
+               query,
+               country = tb$country[i],
+               year = tb$year[i],
+               cases = tb$cases[i],
+               population = tb$population[i])
+}
+
+commit(tx)
+print("All done!")
+```  
+
+Using only the Neo4j browser and the `load csv` command, the whole query and loop would be accomplished by this:  
+**Neo4j load csv**: ![](/Users/Logan/Desktop/Create.nodes.png)
+
+###Create Relationships  
+
+The nodes have been created, but there's nothing to link them together, so we will need to create "relationships". Relationships are similar to constraints in a relational database, or all of the data contained in the same row of a table.  
+
+First we'll create relationships between the `country` and `counts` nodes by writing a new query matching all nodes where the country property `name` matches the `counts` property `country` and then creates the relationship with a name of `count_of`. A new transaction object is called, using the same `graph` object, the transaction and query are passed into `appendCypher`, and we then use `commit` to run the query.  
+
+```{r country_count_relationship}
+query = "MATCH (a:country), (b:counts) WHERE (a.name) = (b.country) CREATE (a)-[:count_of]->(b)"
+
+tx = newTransaction(graph)
+appendCypher(tx, query)
+commit(tx)
+```  
+
+Again, using the Neo4j browser, the query would look like this:  
+**Neo4j Country->Cases Relationship**: ![](/Users/Logan/Desktop/country.cases.png)
+
+Next, we'll do the same thing, but this time create a relationship between the `counts` nodes and the `year` nodes. Similar to before, we'll match the `year` property in both nodes, and then create the relationship between them.  
+
+```{r count_year_relationship}
+query <- "match (a:counts), (b:year) where (a.year) = (b.year) create (a)-[:in_year]->(b)"
+
+tx = newTransaction(graph)
+appendCypher(tx, query)
+commit(tx)
+```  
+
+Again, using the Neo4j browser, the query would look like this:  
+**Neo4j Cases->Year Relationship**: ![](/Users/Logan/Desktop/cases.year.png)
+
+###Browse Neo4j Graph  
+
+Now that the data is loaded and relationships are created, we can start the graph browser from within RStudio using `browse` and inserting our `graph` object.  
+
+```{r launch_graph_browser}
+graph = startGraph("http://localhost:7474/db/data/", username=id, password=pw)
+browse(graph)
+```
+
+As an example, we can call:  
+
+```{r neo4j_example, eval=FALSE}
+MATCH (c:country) -[x:count_of]-(c1:counts)-[:in_year]-(y:year) WHERE toInt(c1.cases) > 100000 AND toInt(y.year) > 2010 return c,x,c1,y
+```  
+
+to get all countries with greater than 100000 tuberculosis cases after the year 2010. It should look something like this:  
+
+**Neo4j Graph**: ![](/Users/Logan/Desktop/Screen\ Shot\ 2016-04-23\ at\ 2.31.01\ PM.png)
+
+##Visualizing Graph Using `visNetwork` and `igraph`  
+
+The Neo4j browser does a fairly good job of visualizing the graph database, and allowing you to customize node and relationship colors, sizes, and displayed labels. The R libraries `visNetwork` and `igraph` allow us to display the information in a similar fashion, and can also be used on data from other sources like RDBMS, data frames, .csv files, etc.  
+
+The tricky part of using `visNetwork` is that is takes parameters for nodes and edges (relationships in the graph), which need to be dataframes. In the example below, we are looking at the relationship between three nodes, so we'll create two queries to get the relationship between our `country` and `counts` nodes, another for the `counts` and `year` relationship, and then row bind the two data frames together. Note there is a different "count" in the `RETURN` clause, which is simply the "weight" of the relationship (how far apart the nodes are).  
+
+The tutorial containing the code from below is found here: http://neo4j.com/blog/visualize-graph-with-rneo4j/  
+
+```{r visualize_data}
+# query to select country and count nodes for the country Germany.
+query <- "MATCH (a:country)-->(b:counts)
+WHERE a.name = 'Germany'
+RETURN a.name AS from, b.cases AS to, COUNT(*) AS weight"
+
+# data frame storing query results
+country_count <- cypher(graph, query)
+
+#query to select count and year nodes
+query <- "MATCH (a:counts)-->(b:year)
+WHERE a.country = 'Germany'
+RETURN a.cases AS from, b.year as to, COUNT(*) AS weight"
+
+count_year <- cypher(graph, query)
+
+# combine the two data frames into one, these are our "edges"
+germany <- (rbind(country_count, count_year))
+
+# create a nodes data frame with the unique values form the edges data frame
+nodes <- data.frame(id=unique(c(germany$from, germany$to)))
+nodes$label <- nodes$id
+```  
+
+Adding the "betweenness" values (not very exciting for this data), and grouping the nodes by clusters, we can color the output according to these values. Both are added as new columns to the `nodes` data frame, and then passed into the `visNetwork` function with our combined `germany` data frame:  
+
+```{r betweenness}
+ig <- graph.data.frame(germany, directed=F)
+nodes$value <- betweenness(ig)
+
+cluster <- cluster_edge_betweenness(ig)
+
+nodes$group <- cluster$membership
+```  
+
+###Tuberculosis Counts in Germany Graph Visual  
+
+```{r germany_viz}
+visNetwork(nodes, germany)
+```
