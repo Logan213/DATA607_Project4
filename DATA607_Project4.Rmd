@@ -148,7 +148,7 @@ print("All done!")
 ```  
 
 Using only the Neo4j browser and the `load csv` command, the whole query and loop would be accomplished by this:  
-**Neo4j load csv**: ![](/Users/Logan/Desktop/Create.nodes.png)
+**Neo4j load csv**: ![](/Users/Logan/Documents/School/CUNY_SPS/DATA\ 607/DATA607_Project4/Create.nodes.png)
 
 ###Create Relationships  
 
@@ -165,7 +165,7 @@ commit(tx)
 ```  
 
 Again, using the Neo4j browser, the query would look like this:  
-**Neo4j Country->Cases Relationship**: ![](/Users/Logan/Desktop/country.cases.png)
+**Neo4j Country->Cases Relationship**: ![](/Users/Logan/Documents/School/CUNY_SPS/DATA\ 607/DATA607_Project4/country.cases.png)
 
 Next, we'll do the same thing, but this time create a relationship between the `counts` nodes and the `year` nodes. Similar to before, we'll match the `year` property in both nodes, and then create the relationship between them.  
 
@@ -178,7 +178,7 @@ commit(tx)
 ```  
 
 Again, using the Neo4j browser, the query would look like this:  
-**Neo4j Cases->Year Relationship**: ![](/Users/Logan/Desktop/cases.year.png)
+**Neo4j Cases->Year Relationship**: ![](/Users/Logan/Documents/School/CUNY_SPS/DATA\ 607/DATA607_Project4/cases.year.png)
 
 ###Browse Neo4j Graph  
 
@@ -197,7 +197,7 @@ MATCH (c:country) -[x:count_of]-(c1:counts)-[:in_year]-(y:year) WHERE toInt(c1.c
 
 to get all countries with greater than 100000 tuberculosis cases after the year 2010. It should look something like this:  
 
-**Neo4j Graph**: ![](/Users/Logan/Desktop/Screen\ Shot\ 2016-04-23\ at\ 2.31.01\ PM.png)
+**Neo4j Graph**: ![](/Users/Logan/Documents/School/CUNY_SPS/DATA\ 607/DATA607_Project4/graph.example.png)
 
 ##Visualizing Graph Using `visNetwork` and `igraph`  
 
@@ -246,4 +246,10 @@ nodes$group <- cluster$membership
 
 ```{r germany_viz}
 visNetwork(nodes, germany)
-```
+```  
+
+##Advantages and Disadvantages: RDBMS vs. NoSQL  
+
+RDBMSs have been around much longer than NoSQL databases, so they are much more mature and developed systems. The two biggest advantages of stemming from this fact are the stability of these systems, and the ubiquity of the SQL language. Whether using PostgreSQL, MySQL, Oracle, or other systems, the code, schemas, and setup should be relatively the same from one system to the next. The huge userbase (millions) for RDBMS databases resulting from the length of their existence is also and advantage. 
+
+NoSQL systems are fairly new, and the stability and support of RDBMSs from large corporations like Microsoft and Oracle does not exist. Where NoSQL systems shine, especially Neo4j, is the speed at which they can access data. Because the whole table does need to be traversed when looking for data, what may take an RDBMS a few thousand milliseconds may only take Neo4j a few milliseconds. Scanning only the nodes that contain certain relationships, or are within "x" number of steps of another node, the database can ignore all other nodes when searching for data. This speed, plus the scalability, is what makes graph and document databases more appropriate for the less structured data that exists in today's big data, web 2.0 climate. Though not as stable or common as RDBMSs, NoSQL databases will continue to grow in popularity, gain in userbase and support, and may one day be on equal footing with traditional RDBMSs.  
